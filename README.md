@@ -25,10 +25,11 @@ O endereço do Product pode ser substituído por `PMA_PRODUCT_URL`/`pma.product.
 padrão é `http://product:8080`.
 
 ```bash
-# Execute no repositório da interface pma:order
-./mvnw clean install
-# Depois, neste repositório order-service
-./mvnw clean verify
+# No PowerShell, execute primeiro no repositório api/order
+.\mvnw.cmd clean install
+# Depois, no repositório api/order-service
+.\mvnw.cmd clean package
+docker build -t order-service .
 ```
 
 ## Consultar pedidos
