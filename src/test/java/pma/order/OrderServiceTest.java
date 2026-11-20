@@ -3,6 +3,8 @@ package pma.order;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,6 +20,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
+
+import feign.FeignException;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -72,6 +76,35 @@ class OrderServiceTest {
         .isInstanceOf(ResponseStatusException.class)
         .extracting(error -> ((ResponseStatusException) error).getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
+  }
+
+  @Test
+  void productRejectingIdIsNotFound() {
+    // caso achado pelo OWASP ZAP: productId "%00" faz o Product responder 400
+    FeignException badRequest = mock(FeignException.class);
+    when(badRequest.status()).thenReturn(400);
+    when(productClient.findById("%00")).thenThrow(badRequest);
+
+    assertThatThrownBy(() -> orderService.create(
+        new OrderIn(List.of(new OrderItemIn("%00", 1))), "account-1"))
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    verify(orderRepository, never()).save(any());
+  }
+
+  @Test
+  void productDownIsServiceUnavailable() {
+    // status -1: o Feign não recebeu resposta (conexão recusada, timeout)
+    FeignException down = mock(FeignException.class);
+    when(down.status()).thenReturn(-1);
+    when(productClient.findById("p1")).thenThrow(down);
+
+    assertThatThrownBy(() -> orderService.create(
+        new OrderIn(List.of(new OrderItemIn("p1", 1))), "account-1"))
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+        .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
   }
 
 }

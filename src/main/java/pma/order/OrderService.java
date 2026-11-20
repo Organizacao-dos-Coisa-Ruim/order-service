@@ -87,9 +87,11 @@ public class OrderService {
     try {
       response = productClient.findById(productId);
     } catch (FeignException exception) {
-      if (exception.status() == 404) {
+      // 4xx: o Product recusou esse id (não existe ou é inválido); para o cliente, o produto não existe
+      if (exception.status() >= 400 && exception.status() < 500) {
         throw new ResponseStatusException(HttpStatus.NOT_FOUND, "produto não encontrado: " + productId);
       }
+      // 5xx ou sem resposta (status -1: conexão recusada, timeout): aí sim o Product está indisponível
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Product indisponível", exception);
     }
 
