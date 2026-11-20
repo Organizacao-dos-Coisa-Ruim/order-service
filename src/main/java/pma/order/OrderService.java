@@ -3,6 +3,7 @@ package pma.order;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,14 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class OrderService {
+
+  /**
+   * Formato dos ids que o Product gera (UUID). O productId vem do usuário e vira parte do caminho da chamada
+   * interna GET /products/{id}: sem esta checagem, valores como "health-check", "%00" ou "..%2f" mudavam a
+   * requisição ao Product e o pedido respondia 502/503 (achado do OWASP ZAP).
+   */
+  private static final Pattern PRODUCT_ID =
+      Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
   private final ProductClient productClient;
   private final OrderRepository orderRepository;
@@ -83,28 +92,32 @@ public class OrderService {
   }
 
   private ProductOut findProduct(String productId) {
+    // id fora do formato UUID não existe no Product: responde 404 sem nem chamar o serviço
+    if (!PRODUCT_ID.matcher(productId).matches()) {
+      throw productNotFound(productId);
+    }
+
     ResponseEntity<ProductOut> response;
     try {
+      // o Feign lança FeignException para qualquer status fora de 2xx: depois do try, a resposta é sempre 2xx
       response = productClient.findById(productId);
     } catch (FeignException exception) {
       // 4xx: o Product recusou esse id (não existe ou é inválido); para o cliente, o produto não existe
       if (exception.status() >= 400 && exception.status() < 500) {
-        throw new ResponseStatusException(HttpStatus.NOT_FOUND, "produto não encontrado: " + productId);
+        throw productNotFound(productId);
       }
       // 5xx ou sem resposta (status -1: conexão recusada, timeout): aí sim o Product está indisponível
       throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Product indisponível", exception);
     }
 
-    if (response == null || response.getStatusCode().isSameCodeAs(HttpStatus.NOT_FOUND)) {
-      throw new ResponseStatusException(HttpStatus.NOT_FOUND, "produto não encontrado: " + productId);
-    }
-    if (!response.getStatusCode().is2xxSuccessful()) {
-      throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Product indisponível");
-    }
     if (response.getBody() == null) {
       throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Product devolveu uma resposta vazia");
     }
     return response.getBody();
+  }
+
+  private static ResponseStatusException productNotFound(String productId) {
+    return new ResponseStatusException(HttpStatus.NOT_FOUND, "produto não encontrado: " + productId);
   }
 
 }

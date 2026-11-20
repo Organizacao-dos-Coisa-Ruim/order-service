@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -13,6 +14,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -35,17 +38,21 @@ class OrderServiceTest {
   @InjectMocks
   private OrderService orderService;
 
+  /** Ids no formato que o Product gera (UUID). */
+  private static final String P1 = "0195abfb-7074-73a9-9d26-b4b9fbaab0a8";
+  private static final String P2 = "0195abfe-e416-7052-be3b-27cdaf12a984";
+
   @Test
   void calculatesTotalFromProductPricesAndPersistsAccountAndItems() {
-    when(productClient.findById("p1"))
-        .thenReturn(ResponseEntity.ok(new ProductOut("p1", "Caneca", new BigDecimal("19.99"))));
-    when(productClient.findById("p2"))
-        .thenReturn(ResponseEntity.ok(new ProductOut("p2", "Caderno", new BigDecimal("12.50"))));
+    when(productClient.findById(P1))
+        .thenReturn(ResponseEntity.ok(new ProductOut(P1, "Caneca", new BigDecimal("19.99"))));
+    when(productClient.findById(P2))
+        .thenReturn(ResponseEntity.ok(new ProductOut(P2, "Caderno", new BigDecimal("12.50"))));
     when(orderRepository.save(any(OrderModel.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
     OrderOut result = orderService.create(new OrderIn(List.of(
-        new OrderItemIn("p1", 2),
-        new OrderItemIn("p2", 1))), "account-1");
+        new OrderItemIn(P1, 2),
+        new OrderItemIn(P2, 1))), "account-1");
 
     assertThat(result.accountId()).isEqualTo("account-1");
     assertThat(result.total()).isEqualByComparingTo("52.48");
@@ -60,33 +67,50 @@ class OrderServiceTest {
 
   @Test
   void productNotFoundDoesNotPersistOrder() {
-    when(productClient.findById("missing")).thenReturn(ResponseEntity.notFound().build());
+    // é assim que o Feign se comporta de verdade: 404 do Product vira FeignException
+    FeignException notFound = mock(FeignException.class);
+    when(notFound.status()).thenReturn(404);
+    when(productClient.findById(P1)).thenThrow(notFound);
 
     assertThatThrownBy(() -> orderService.create(
-        new OrderIn(List.of(new OrderItemIn("missing", 1))), "account-1"))
+        new OrderIn(List.of(new OrderItemIn(P1, 1))), "account-1"))
         .isInstanceOf(ResponseStatusException.class)
         .extracting(error -> ((ResponseStatusException) error).getStatusCode())
         .isEqualTo(HttpStatus.NOT_FOUND);
+    verify(orderRepository, never()).save(any());
   }
 
   @Test
   void missingAccountIsUnauthorized() {
     assertThatThrownBy(() -> orderService.create(
-        new OrderIn(List.of(new OrderItemIn("p1", 1))), " "))
+        new OrderIn(List.of(new OrderItemIn(P1, 1))), " "))
         .isInstanceOf(ResponseStatusException.class)
         .extracting(error -> ((ResponseStatusException) error).getStatusCode())
         .isEqualTo(HttpStatus.UNAUTHORIZED);
   }
 
+  /** Casos achados com o OWASP ZAP: o id mudava o caminho de GET /products/{id} (502/503). */
+  @ParameterizedTest
+  @ValueSource(strings = {"health-check", "%00", "..%2f", "../actuator/health", "p1"})
+  void productIdOutsideUuidFormatIsNotFoundWithoutCallingProduct(String productId) {
+    assertThatThrownBy(() -> orderService.create(
+        new OrderIn(List.of(new OrderItemIn(productId, 1))), "account-1"))
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(error -> ((ResponseStatusException) error).getStatusCode())
+        .isEqualTo(HttpStatus.NOT_FOUND);
+    verifyNoInteractions(productClient);
+    verify(orderRepository, never()).save(any());
+  }
+
   @Test
   void productRejectingIdIsNotFound() {
-    // caso achado pelo OWASP ZAP: productId "%00" faz o Product responder 400
+    // qualquer 4xx do Product (ex.: 400 para um id que ele recusa) é "produto não encontrado"
     FeignException badRequest = mock(FeignException.class);
     when(badRequest.status()).thenReturn(400);
-    when(productClient.findById("%00")).thenThrow(badRequest);
+    when(productClient.findById(P1)).thenThrow(badRequest);
 
     assertThatThrownBy(() -> orderService.create(
-        new OrderIn(List.of(new OrderItemIn("%00", 1))), "account-1"))
+        new OrderIn(List.of(new OrderItemIn(P1, 1))), "account-1"))
         .isInstanceOf(ResponseStatusException.class)
         .extracting(error -> ((ResponseStatusException) error).getStatusCode())
         .isEqualTo(HttpStatus.NOT_FOUND);
@@ -98,10 +122,10 @@ class OrderServiceTest {
     // status -1: o Feign não recebeu resposta (conexão recusada, timeout)
     FeignException down = mock(FeignException.class);
     when(down.status()).thenReturn(-1);
-    when(productClient.findById("p1")).thenThrow(down);
+    when(productClient.findById(P1)).thenThrow(down);
 
     assertThatThrownBy(() -> orderService.create(
-        new OrderIn(List.of(new OrderItemIn("p1", 1))), "account-1"))
+        new OrderIn(List.of(new OrderItemIn(P1, 1))), "account-1"))
         .isInstanceOf(ResponseStatusException.class)
         .extracting(error -> ((ResponseStatusException) error).getStatusCode())
         .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);

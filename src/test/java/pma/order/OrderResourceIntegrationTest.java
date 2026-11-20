@@ -35,6 +35,9 @@ class OrderResourceIntegrationTest {
   @MockitoBean
   private ProductClient productClient;
 
+  /** Id no formato que o Product gera (UUID). */
+  private static final String P1 = "0195abfb-7074-73a9-9d26-b4b9fbaab0a8";
+
   @BeforeEach
   void cleanDatabase() {
     orderRepository.deleteAll();
@@ -42,19 +45,19 @@ class OrderResourceIntegrationTest {
 
   @Test
   void createsOrderUsingGatewayAccountAndPersistsItemSnapshots() throws Exception {
-    when(productClient.findById("p1"))
+    when(productClient.findById(P1))
         .thenReturn(org.springframework.http.ResponseEntity.ok(
-            new ProductOut("p1", "Caneca", new BigDecimal("19.99"))));
+            new ProductOut(P1, "Caneca", new BigDecimal("19.99"))));
 
     mockMvc.perform(post("/orders")
         .header("id-account", "account-1")
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"items\":[{\"productId\":\"p1\",\"quantity\":2}]}"))
+        .content("{\"items\":[{\"productId\":\"" + P1 + "\",\"quantity\":2}]}"))
         .andExpect(status().isCreated())
         .andExpect(header().exists("Location"))
         .andExpect(jsonPath("$.accountId").value("account-1"))
         .andExpect(jsonPath("$.total").value(39.98))
-        .andExpect(jsonPath("$.items[0].productId").value("p1"))
+        .andExpect(jsonPath("$.items[0].productId").value(P1))
         .andExpect(jsonPath("$.items[0].unitPrice").value(19.99))
         .andExpect(jsonPath("$.items[0].subtotal").value(39.98));
 
@@ -68,7 +71,7 @@ class OrderResourceIntegrationTest {
   void requiresGatewayAccountHeader() throws Exception {
     mockMvc.perform(post("/orders")
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"items\":[{\"productId\":\"p1\",\"quantity\":1}]}"))
+        .content("{\"items\":[{\"productId\":\"" + P1 + "\",\"quantity\":1}]}"))
         .andExpect(status().isUnauthorized());
   }
 
@@ -77,26 +80,40 @@ class OrderResourceIntegrationTest {
     mockMvc.perform(post("/orders")
         .header("id-account", "account-1")
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"items\":[{\"productId\":\"p1\",\"quantity\":0}]}"))
+        .content("{\"items\":[{\"productId\":\"" + P1 + "\",\"quantity\":0}]}"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void returnsNotFoundWhenProductDoesNotExist() throws Exception {
-    when(productClient.findById("missing")).thenReturn(org.springframework.http.ResponseEntity.notFound().build());
+    // é assim que o Feign se comporta de verdade: 404 do Product vira FeignException
+    feign.FeignException notFound = org.mockito.Mockito.mock(feign.FeignException.class);
+    when(notFound.status()).thenReturn(404);
+    when(productClient.findById(P1)).thenThrow(notFound);
 
     mockMvc.perform(post("/orders")
         .header("id-account", "account-1")
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"items\":[{\"productId\":\"missing\",\"quantity\":1}]}"))
+        .content("{\"items\":[{\"productId\":\"" + P1 + "\",\"quantity\":1}]}"))
         .andExpect(status().isNotFound());
   }
 
   @Test
+  void productIdOutsideUuidFormatIsNotFound() throws Exception {
+    // achado do OWASP ZAP: "health-check" fazia o Order chamar GET /products/health-check e responder 502
+    mockMvc.perform(post("/orders")
+        .header("id-account", "account-1")
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"items\":[{\"productId\":\"health-check\",\"quantity\":1}]}"))
+        .andExpect(status().isNotFound());
+    org.mockito.Mockito.verifyNoInteractions(productClient);
+  }
+
+  @Test
   void listsOnlyTheAuthenticatedUsersOrders() throws Exception {
-    when(productClient.findById("p1"))
+    when(productClient.findById(P1))
         .thenReturn(org.springframework.http.ResponseEntity.ok(
-            new ProductOut("p1", "Caneca", new BigDecimal("19.99"))));
+            new ProductOut(P1, "Caneca", new BigDecimal("19.99"))));
     createOrder("account-1");
     createOrder("account-2");
 
@@ -104,14 +121,14 @@ class OrderResourceIntegrationTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$", org.hamcrest.Matchers.hasSize(1)))
         .andExpect(jsonPath("$[0].accountId").value("account-1"))
-        .andExpect(jsonPath("$[0].items[0].productId").value("p1"));
+        .andExpect(jsonPath("$[0].items[0].productId").value(P1));
   }
 
   @Test
   void returnsOrderOnlyToItsOwner() throws Exception {
-    when(productClient.findById("p1"))
+    when(productClient.findById(P1))
         .thenReturn(org.springframework.http.ResponseEntity.ok(
-            new ProductOut("p1", "Caneca", new BigDecimal("19.99"))));
+            new ProductOut(P1, "Caneca", new BigDecimal("19.99"))));
     createOrder("account-1");
     OrderModel order = orderRepository.findAll().get(0);
 
@@ -142,7 +159,7 @@ class OrderResourceIntegrationTest {
     mockMvc.perform(post("/orders")
         .header("id-account", accountId)
         .contentType(MediaType.APPLICATION_JSON)
-        .content("{\"items\":[{\"productId\":\"p1\",\"quantity\":1}]}"))
+        .content("{\"items\":[{\"productId\":\"" + P1 + "\",\"quantity\":1}]}"))
         .andExpect(status().isCreated());
   }
 
