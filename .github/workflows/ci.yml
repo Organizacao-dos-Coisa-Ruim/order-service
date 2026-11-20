@@ -1,3 +1,8 @@
+# CI/CD do order-service
+#
+# Todo push/PR: instala a interface pma:order e roda os testes.
+# Push na main: também publica a imagem no Docker Hub (<usuario>/order:latest e :<sha>),
+# se os secrets DOCKERHUB_USERNAME e DOCKERHUB_TOKEN estiverem configurados na organização.
 name: CI
 
 on:
@@ -6,22 +11,51 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  IMAGE: order
+
 jobs:
   build:
+    name: Build, testes e imagem
     runs-on: ubuntu-latest
+    env:
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Checkout da interface Order
+
+      # interface de que o service depende (não está em nenhum repositório Maven público)
+      - name: Checkout da interface order
         uses: actions/checkout@v4
         with:
           repository: Organizacao-dos-Coisa-Ruim/order
           path: .deps/order
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
+
       - name: Instalar interface
         run: mvn -B -q install -DskipTests -f .deps/order/pom.xml
+
+      # gera o jar em target/, que o Dockerfile copia para a imagem
       - name: Build e testes
         run: mvn -B verify
+
+      - name: Login no Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_DOCKERHUB == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build e push da imagem
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.HAS_DOCKERHUB == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE }}:${{ github.sha }}
