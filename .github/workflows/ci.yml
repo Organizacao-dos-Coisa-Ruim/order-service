@@ -3,7 +3,7 @@
 # Todo push/PR: instala a interface pma:order e roda os testes.
 # Push na main: também publica a imagem no Docker Hub (<usuario>/order:latest e :<sha>),
 # se os secrets DOCKERHUB_USERNAME e DOCKERHUB_TOKEN estiverem configurados na organização.
-# Depois do push: deploy no EKS (kubectl set image com a tag do commit), se os secrets AWS_ACCESS_KEY_ID e
+# Depois do push: deploy no EKS (kubectl set image com a tag do commit, no order e no order-worker), se os secrets AWS_ACCESS_KEY_ID e
 # AWS_SECRET_ACCESS_KEY existirem e o cluster estiver de pé (o cluster só existe durante os testes: sem ele, pula).
 name: CI
 
@@ -97,5 +97,10 @@ jobs:
         if: steps.cluster.outputs.up == 'true'
         run: |
           aws eks update-kubeconfig --name "$CLUSTER"
-          kubectl -n pma26 set image deployment/${{ env.IMAGE }} ${{ env.IMAGE }}=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE }}:${{ github.sha }}
+          IMG=${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE }}:${{ github.sha }}
+          kubectl -n pma26 set image deployment/${{ env.IMAGE }} ${{ env.IMAGE }}=$IMG
+          # o order-worker (consumidor da fila do RabbitMQ, #77) roda a mesma imagem: atualiza junto,
+          # senão a API sobe com o código novo e o worker continua no antigo
+          kubectl -n pma26 set image deployment/order-worker order-worker=$IMG
           kubectl -n pma26 rollout status deployment/${{ env.IMAGE }} --timeout=5m
+          kubectl -n pma26 rollout status deployment/order-worker --timeout=5m
