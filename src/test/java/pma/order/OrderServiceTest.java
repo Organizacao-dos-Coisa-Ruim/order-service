@@ -35,6 +35,9 @@ class OrderServiceTest {
   @Mock
   private OrderRepository orderRepository;
 
+  @Mock
+  private OrderConfirmation orderConfirmation;
+
   @InjectMocks
   private OrderService orderService;
 
@@ -63,6 +66,9 @@ class OrderServiceTest {
     verify(orderRepository).save(captor.capture());
     assertThat(captor.getValue().getAccountId()).isEqualTo("account-1");
     assertThat(captor.getValue().getItems()).hasSize(2);
+    // nasce PENDENTE e pede a confirmação (assíncrona) do pedido salvo
+    assertThat(result.status()).isEqualTo(OrderOut.STATUS_PENDENTE);
+    verify(orderConfirmation).requestFor(captor.getValue());
   }
 
   @Test

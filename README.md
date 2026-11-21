@@ -42,5 +42,27 @@ pertence a outra conta e `404` quando não existe. Sem o header, ambas as rotas 
 A interface do serviço declara essas rotas em `OrderController`; o gateway deve continuar
 validando o token e sobrescrevendo o header `id-account`.
 
-Ainda é necessário integrar a imagem/container e configurar a coleta de métricas no projeto
-principal.
+## Confirmação assíncrona (RabbitMQ)
+
+Gargalo de mensageria (#77). O pedido nasce `PENDENTE`, e a confirmação ao cliente (envio simulado,
+~2 s) sai da requisição e vai para uma fila:
+
+```
+POST /orders ──▶ salva (PENDENTE) ──▶ publica o id na fila "order-created" ──▶ 201
+                                                   │
+                     worker (@RabbitListener) ◀────┘  envia a confirmação, marca CONFIRMADO
+```
+
+| Classe | Papel |
+|--------|-------|
+| `OrderMessaging` | declara a fila `order-created` e a fila de erro `order-created.dlq` |
+| `OrderEventPublisher` | publica o id do pedido. Se o RabbitMQ estiver fora, o pedido é criado do mesmo jeito e fica `PENDENTE` |
+| `OrderConfirmation` | envia a confirmação e marca `CONFIRMADO`. Com `ORDER_CONFIRMATION_ASYNC=false`, faz isso dentro da requisição (o "antes", para comparar) |
+| `OrderCreatedListener` | o worker: consome a fila. Mensagem repetida não confirma duas vezes (o `UPDATE` só altera pedido `PENDENTE`). Falhou 3 vezes → DLQ |
+
+| Variável | Padrão | Para quê |
+|----------|--------|----------|
+| `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USERNAME`, `RABBITMQ_PASSWORD` | `localhost`, `5672`, `pma26`, vazio | conexão com o RabbitMQ |
+| `ORDER_WORKER_ENABLED` | `true` | liga o consumo da fila. No compose, a API desliga e o container `order-worker` (mesma imagem) liga |
+| `ORDER_CONFIRMATION_DELAY` | `2s` | duração do envio simulado |
+| `ORDER_CONFIRMATION_ASYNC` | `true` | `false` confirma dentro da requisição, sem fila |

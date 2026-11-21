@@ -35,6 +35,11 @@
       <groupId>org.springframework.cloud</groupId>
       <artifactId>spring-cloud-starter-openfeign</artifactId>
     </dependency>
+    <!-- RabbitMQ: evento "pedido criado" para o worker de confirmação (gargalo de mensageria, #77) -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
     <dependency>
       <groupId>pma</groupId>
       <artifactId>order</artifactId>

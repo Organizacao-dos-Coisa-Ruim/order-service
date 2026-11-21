@@ -23,6 +23,8 @@ final class OrderParser {
         .total(model.getTotal())
         .createdAt(model.getCreatedAt())
         .items(items)
+        .status(model.getStatus())
+        .confirmedAt(model.getConfirmedAt())
         .build();
   }
 

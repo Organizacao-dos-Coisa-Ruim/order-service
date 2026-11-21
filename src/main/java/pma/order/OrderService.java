@@ -28,6 +28,7 @@ public class OrderService {
 
   private final ProductClient productClient;
   private final OrderRepository orderRepository;
+  private final OrderConfirmation orderConfirmation;
 
   public OrderOut create(OrderIn in, String accountId) {
     requireAccountId(accountId);
@@ -63,7 +64,11 @@ public class OrderService {
       order.setTotal(order.getTotal().add(subtotal));
     }
 
-    return OrderParser.to(orderRepository.save(order));
+    order.setStatus(OrderOut.STATUS_PENDENTE);
+    OrderModel saved = orderRepository.save(order);
+    // a confirmação ao cliente é assíncrona: publica o evento na fila e responde sem esperar o envio
+    orderConfirmation.requestFor(saved);
+    return OrderParser.to(saved);
   }
 
   @Transactional(readOnly = true)

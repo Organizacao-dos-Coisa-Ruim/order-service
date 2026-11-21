@@ -35,6 +35,13 @@ public class OrderModel {
   @Column(name = "created_at", nullable = false)
   private Instant createdAt;
 
+  /** PENDENTE até o order-worker enviar a confirmação; depois CONFIRMADO (ver OrderOut.STATUS_*). */
+  @Column(name = "status", nullable = false, length = 16)
+  private String status;
+
+  @Column(name = "confirmed_at")
+  private Instant confirmedAt;
+
   @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
   private List<OrderItemModel> items = new ArrayList<>();
 

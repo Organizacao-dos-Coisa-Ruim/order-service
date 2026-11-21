@@ -35,6 +35,10 @@ class OrderResourceIntegrationTest {
   @MockitoBean
   private ProductClient productClient;
 
+  /** Sem RabbitMQ nos testes: o evento "pedido criado" vai para um mock. */
+  @MockitoBean
+  private OrderEventPublisher eventPublisher;
+
   /** Id no formato que o Product gera (UUID). */
   private static final String P1 = "0195abfb-7074-73a9-9d26-b4b9fbaab0a8";
 
@@ -59,12 +63,35 @@ class OrderResourceIntegrationTest {
         .andExpect(jsonPath("$.total").value(39.98))
         .andExpect(jsonPath("$.items[0].productId").value(P1))
         .andExpect(jsonPath("$.items[0].unitPrice").value(19.99))
-        .andExpect(jsonPath("$.items[0].subtotal").value(39.98));
+        .andExpect(jsonPath("$.items[0].subtotal").value(39.98))
+        // a confirmação é assíncrona: o pedido sai PENDENTE e o evento vai para a fila
+        .andExpect(jsonPath("$.status").value("PENDENTE"))
+        .andExpect(jsonPath("$.confirmedAt").doesNotExist());
 
     OrderModel saved = orderRepository.findAll().get(0);
     org.assertj.core.api.Assertions.assertThat(saved.getAccountId()).isEqualTo("account-1");
     org.assertj.core.api.Assertions.assertThat(saved.getItems()).hasSize(1);
     org.assertj.core.api.Assertions.assertThat(saved.getTotal()).isEqualByComparingTo("39.98");
+    org.assertj.core.api.Assertions.assertThat(saved.getStatus()).isEqualTo("PENDENTE");
+    org.mockito.Mockito.verify(eventPublisher).orderCreated(saved.getId());
+  }
+
+  @Test
+  void markConfirmedOnlyChangesPendingOrders() throws Exception {
+    when(productClient.findById(P1))
+        .thenReturn(org.springframework.http.ResponseEntity.ok(
+            new ProductOut(P1, "Caneca", new BigDecimal("19.99"))));
+    createOrder("account-1");
+    String id = orderRepository.findAll().get(0).getId();
+
+    // o UPDATE do worker roda no banco de verdade (H2 com as migrations): confirma uma vez só
+    org.assertj.core.api.Assertions.assertThat(orderRepository.markConfirmed(id, java.time.Instant.now())).isEqualTo(1);
+    org.assertj.core.api.Assertions.assertThat(orderRepository.markConfirmed(id, java.time.Instant.now())).isEqualTo(0);
+
+    mockMvc.perform(get("/orders/" + id).header("id-account", "account-1"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CONFIRMADO"))
+        .andExpect(jsonPath("$.confirmedAt").exists());
   }
 
   @Test

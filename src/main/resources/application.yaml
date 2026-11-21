@@ -22,10 +22,37 @@ spring:
     schemas: orders
     default-schema: orders
     create-schemas: true
+  # RabbitMQ: fila do evento "pedido criado" (gargalo de mensageria, #77)
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:pma26}
+    password: ${RABBITMQ_PASSWORD:}
+    # RabbitMQ fora do ar não pode prender o POST /orders por 60 s (o padrão)
+    connection-timeout: 2s
+    listener:
+      simple:
+        # se a confirmação falhar, tenta de novo mais 2 vezes (3 no total)...
+        retry:
+          enabled: true
+          max-retries: 2
+          initial-interval: 1s
+        # ...e depois a mensagem vai para a fila de erro (order-created.dlq), em vez de voltar
+        # para a fila e travar o worker num loop
+        default-requeue-rejected: false
 
 pma:
   product:
     url: ${PMA_PRODUCT_URL:http://product:8080}
+  order:
+    worker:
+      # consome a fila "pedido criado". No compose, a API (order) desliga e o order-worker liga
+      enabled: ${ORDER_WORKER_ENABLED:true}
+    confirmation:
+      # simula o envio da confirmação ao cliente (e-mail, recibo): é a etapa lenta que saiu da requisição
+      delay: ${ORDER_CONFIRMATION_DELAY:2s}
+      # false: confirma dentro da requisição, sem fila (o "antes" do gargalo, para comparar a latência)
+      async: ${ORDER_CONFIRMATION_ASYNC:true}
 
 management:
   endpoints:
